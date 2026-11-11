@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Labels shrink to fit a narrow sidebar (22 columns by default, `SDD_STATUS_WIDTH` to change): full words, then short words, then the first task plus `+N`. Tasks are listed in plan order.
+
 ## 0.1.0
 
 First release.

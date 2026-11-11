@@ -32,6 +32,16 @@ printf 'Task 1: complete (commits a..b, review clean)\nTask 2: dispatched\nTask 
 hook post-tool '{session_id:"S1",tool_name:"Agent",tool_input:{}}' >/dev/null
 check "label shows 1/3 · T2 fix 2/5" 'tail -1 "$tmp/herdr.log" | grep -q "SDD 1/3 · T2 fix 2/5"'
 
+r=$("$bin" render "$ws")
+check "one task: full words" '[ "$r" = "SDD 1/3 · T2 fix 2/5" ]'
+cp "$ws/progress.md" "$tmp/ledger.bak"
+printf 'Task 3: implemented\n' >>"$ws/progress.md"
+r=$("$bin" render "$ws")
+check "two tasks shortened to fit 22 cols" '[ "$r" = "SDD 1/3 T2 fix2 T3 rev" ]'
+r=$(SDD_STATUS_WIDTH=40 "$bin" render "$ws")
+check "wider sidebar keeps full words" '[ "$r" = "SDD 1/3 · T2 fix 2/5, T3 review" ]'
+cp "$tmp/ledger.bak" "$ws/progress.md"
+
 n=$(wc -l <"$tmp/herdr.log")
 hook post-tool '{session_id:"S1",tool_name:"Read",tool_input:{}}' >/dev/null
 check "no herdr call when label unchanged" '[ "$(wc -l <"$tmp/herdr.log")" = "$n" ]'

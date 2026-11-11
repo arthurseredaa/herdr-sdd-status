@@ -1,6 +1,6 @@
 {
   "name": "sdd-status",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shows superpowers SDD progress in the herdr sidebar and stops the SDD orchestrator from editing project files itself",
   "author": {
     "name": "arthurseredaa",

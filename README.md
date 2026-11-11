@@ -40,8 +40,11 @@ Requirements: `jq`, herdr 0.9 or newer (for `pane report-metadata` tokens), Clau
 | `SDD 2/8 · T3 impl` | Task 3 is dispatched to an implementer |
 | `SDD 2/8 · T3 review` | Task 3 is implemented and under review |
 | `SDD 2/8 · T3 fix 2/5` | Task 3 is in review fix round 2 of 5 |
-| `SDD 2/8 · T3 impl, T5 review` | tasks running in parallel |
+| `SDD 2/8 T3 impl T5 rev` | tasks running in parallel, short form |
+| `SDD 2/8 T3 impl +2` | three tasks in flight: the first one, plus how many more |
 | `SDD 8/8 · final review` | every task is complete |
+
+`2/8` counts finished tasks; `T3` is the plan's Task 3. The sidebar is narrow, so the label is shortened step by step until it fits 22 columns: full words first, then `rev`/`fix2`, then the first task with `+N`. If your sidebar is wider, set `SDD_STATUS_WIDTH` (for example `40`) in the environment Claude Code runs in.
 
 The row disappears when SDD deletes its workspace at the end of the run, or when the session ends.
 
@@ -74,7 +77,7 @@ Remove the `$sdd` row from your herdr config if you added it.
 
 ## Development
 
-`test/run.sh` feeds fake hook input to `bin/sdd-status` with a stub `herdr` and runs 14 checks. Set `SDD_STATUS_DEBUG=/path/to/log` to log every hook input the script receives, which is how you can check what Claude Code actually sends.
+`test/run.sh` feeds fake hook input to `bin/sdd-status` with a stub `herdr` and runs 17 checks. Set `SDD_STATUS_DEBUG=/path/to/log` to log every hook input the script receives, which is how you can check what Claude Code actually sends.
 
 To try local changes in one session: `claude --plugin-dir /path/to/herdr-sdd-status`.
 

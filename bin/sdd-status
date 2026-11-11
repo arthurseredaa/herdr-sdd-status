@@ -45,7 +45,8 @@ render() {
     total=$(grep -cE '^#{2,4} +(Task|Stage|Задача|Етап) +[0-9]+' "$plan")
     [ "$total" -gt 0 ] || total="?"
   fi
-  awk -v total="$total" '
+  local raw head d tasks n
+  raw=$(awk '
     {
       line = $0
       while (match(line, /(Task|Stage|Задача|Етап) [0-9]+: [^ ]+( round [0-9]+\/[0-9]+)?/)) {
@@ -57,17 +58,38 @@ render() {
         else if (kw == "fix")                         { if (!(n in done)) { r = m; sub(/.*round /, "", r); ph[n] = "fix " r } }
         else if (kw == "blocked" || kw == "blocked:") { if (!(n in done)) ph[n] = "blocked" }
       }
-      if ($0 ~ /[Ff]inal (whole-branch )?review/) final = 1
     }
     END {
       d = 0; for (k in done) d++
-      out = "SDD " d "/" total
-      if (total != "?" && d >= total) { print out " · final review"; exit }
-      s = ""
-      for (k in ph) if (ph[k] != "" && !(k in done)) s = s (s == "" ? "" : ", ") "T" k " " ph[k]
-      if (s != "") out = out " · " s
-      print substr(out, 1, 80)
-    }' "$ledger"
+      print d
+      for (k in ph) if (ph[k] != "" && !(k in done)) print k "\t" ph[k]
+    }' "$ledger")
+  d=$(head -1 <<<"$raw")
+  head="SDD $d/$total"
+  if [ "$total" != "?" ] && [ "$d" -ge "$total" ]; then echo "$head · final review"; return; fi
+  tasks=$(tail -n +2 <<<"$raw" | sort -n)
+  n=$(awk 'NF' <<<"$tasks" | wc -l | tr -d ' ')
+  [ "$n" -gt 0 ] || { echo "$head"; return; }
+  fit_label "$head" "$tasks" "$n"
+}
+
+# Sidebars are narrow, so try ever shorter forms until one fits
+# SDD_STATUS_WIDTH (default 22 columns):
+#   SDD 3/8 · T4 review, T7 impl   full words
+#   SDD 3/8 T4 rev T7 impl         short words
+#   SDD 3/8 T4 rev +1              first task + how many more
+fit_label() {
+  local head=$1 tasks=$2 n=$3 max=${SDD_STATUS_WIDTH:-22} full short first
+  full=$(awk -F'\t' '{ printf "%sT%s %s", (NR > 1 ? ", " : ""), $1, $2 }' <<<"$tasks")
+  short=$(awk -F'\t' '{ p = $2; sub(/^review$/, "rev", p); sub(/^fix /, "fix", p); sub(/\/5$/, "", p)
+                        printf "%sT%s %s", (NR > 1 ? " " : ""), $1, p }' <<<"$tasks")
+  first=${short%% T*}
+  for cand in "$head · $full" "$head $short"; do
+    if [ "$(printf '%s' "$cand" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -le "$max" ]; then
+      echo "$cand"; return
+    fi
+  done
+  if [ "$n" -gt 1 ]; then echo "$head $first +$((n - 1))"; else echo "$head $short"; fi
 }
 
 post_tool() {
