@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# herdr-sdd-status: show superpowers SDD progress on the orchestrator's herdr
+# pane and stop the orchestrator from editing files itself while SDD runs.
+#
+# Subcommands (hooks pass the hook JSON on stdin):
+#   post-tool      PostToolUse: bind session to SDD workspace, refresh the label
+#   pre-tool       PreToolUse: deny Edit/Write in the orchestrator during SDD
+#   session-start  SessionStart: drop state left on this pane by an old session
+#   session-end    SessionEnd: clear this session's label and state
+#   off            release this pane's SDD session (label + guard)
+#   render WS      print the label for workspace dir WS (for tests/debugging)
+set -uo pipefail
+
+STATE_DIR="${SDD_STATUS_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-sdd-status}"
+SOURCE="sdd-status"
+HERDR="${SDD_STATUS_HERDR:-herdr}"
+
+json() { jq -r "$1 // empty" <<<"$INPUT" 2>/dev/null; }
+
+state_file() { printf '%s/%s.json' "$STATE_DIR" "$1"; }
+
+herdr_ok() { [ -n "${HERDR_PANE_ID:-}" ] && command -v "$HERDR" >/dev/null 2>&1; }
+
+set_label() { # pane label
+  herdr_ok || return 0
+  "$HERDR" pane report-metadata "$1" --source "$SOURCE" --token "sdd=$2" \
+    >/dev/null 2>&1 || true
+}
+
+clear_label() { # pane
+  [ -n "$1" ] && command -v "$HERDR" >/dev/null 2>&1 || return 0
+  "$HERDR" pane report-metadata "$1" --source "$SOURCE" --clear-token sdd \
+    >/dev/null 2>&1 || true
+}
+
+# Label for one SDD workspace, read only from files (never from the model).
+render() {
+  local ws=$1 ledger="$1/progress.md" root plan total
+  [ -f "$ledger" ] || { echo "SDD · setup"; return; }
+  root=$(cd "$ws/../../.." 2>/dev/null && pwd)
+  plan=$(head -1 "$ledger" | sed -n 's/^# SDD ledger — plan: *//p')
+  case "$plan" in "~"/*) plan="$HOME/${plan#\~/}" ;; /*) ;; ?*) plan="$root/$plan" ;; esac
+  total="?"
+  if [ -n "$plan" ] && [ -f "$plan" ]; then
+    total=$(grep -cE '^#{2,4} +(Task|Stage|Задача|Етап) +[0-9]+' "$plan")
+    [ "$total" -gt 0 ] || total="?"
+  fi
+  awk -v total="$total" '
+    {
+      line = $0
+      while (match(line, /(Task|Stage|Задача|Етап) [0-9]+: [^ ]+( round [0-9]+\/[0-9]+)?/)) {
+        m = substr(line, RSTART, RLENGTH); line = substr(line, RSTART + RLENGTH)
+        split(m, p, " "); n = p[2]; sub(/:$/, "", n); kw = tolower(p[3])
+        if (kw == "complete")                         { done[n] = 1; ph[n] = "" }
+        else if (kw == "dispatched")                  { if (!(n in done)) { ph[n] = "impl"; seen[n] = ++order } }
+        else if (kw == "implemented" || kw ~ /^done/ || kw == "reviewed") { if (!(n in done)) ph[n] = "review" }
+        else if (kw == "fix")                         { if (!(n in done)) { r = m; sub(/.*round /, "", r); ph[n] = "fix " r } }
+        else if (kw == "blocked" || kw == "blocked:") { if (!(n in done)) ph[n] = "blocked" }
+      }
+      if ($0 ~ /[Ff]inal (whole-branch )?review/) final = 1
+    }
+    END {
+      d = 0; for (k in done) d++
+      out = "SDD " d "/" total
+      if (total != "?" && d >= total) { print out " · final review"; exit }
+      s = ""
+      for (k in ph) if (ph[k] != "" && !(k in done)) s = s (s == "" ? "" : ", ") "T" k " " ph[k]
+      if (s != "") out = out " · " s
+      print substr(out, 1, 80)
+    }' "$ledger"
+}
+
+post_tool() {
+  local sid tool cmd ws sf pane label old
+  sid=$(json .session_id); [ -n "$sid" ] || return 0
+  sf=$(state_file "$sid")
+  tool=$(json .tool_name)
+  if [ "$tool" = Bash ]; then
+    cmd=$(json .tool_input.command)
+    case "$cmd" in *sdd-workspace*)
+      # The command may chain other output around sdd-workspace's; take the
+      # last stdout line that names an SDD workspace (has a plan-path marker).
+      ws=""
+      while IFS= read -r line; do
+        case "$line" in */.superpowers/sdd/*) [ -f "$line/plan-path" ] && ws=$line ;; esac
+      done < <(jq -r '.tool_response.stdout // .tool_response // empty' <<<"$INPUT" 2>/dev/null)
+      if [ -n "$ws" ]; then
+        mkdir -p "$STATE_DIR"
+        jq -n --arg ws "$ws" --arg pane "${HERDR_PANE_ID:-}" \
+          '{workspace:$ws, pane:$pane, label:""}' >"$sf"
+      fi ;;
+    esac
+  fi
+  [ -f "$sf" ] || return 0
+  ws=$(jq -r .workspace "$sf"); pane=$(jq -r .pane "$sf"); old=$(jq -r .label "$sf")
+  if [ ! -d "$ws" ]; then # SDD deleted its workspace: run is over
+    clear_label "$pane"; rm -f "$sf"; return 0
+  fi
+  label=$(render "$ws")
+  if [ "$label" != "$old" ]; then
+    set_label "$pane" "$label"
+    jq --arg l "$label" '.label=$l' "$sf" >"$sf.tmp" && mv "$sf.tmp" "$sf"
+  fi
+}
+
+pre_tool() {
+  local sid sf ws path
+  sid=$(json .session_id); [ -n "$sid" ] || return 0
+  sf=$(state_file "$sid"); [ -f "$sf" ] || return 0
+  [ -z "$(json .agent_id)" ] || return 0          # subagents may edit
+  ws=$(jq -r .workspace "$sf"); [ -d "$ws" ] || return 0
+  path=$(json .tool_input.file_path); [ -n "$path" ] || path=$(json .tool_input.notebook_path)
+  case "$path" in "$ws"/*) return 0 ;; esac        # ledger, briefs, reports
+  jq -n --arg ws "$ws" '{hookSpecificOutput:{hookEventName:"PreToolUse",
+    permissionDecision:"deny",
+    permissionDecisionReason:("sdd-status guard: this session is the SDD orchestrator, so it does not edit project files. Delegate the change to an implementer or fix subagent. Only files under " + $ws + " (ledger, briefs, reports) may be edited here. Do not try to turn this guard off; only the user can, with /sdd-status:off.")}}'
+}
+
+session_start() {
+  local f
+  [ -n "${HERDR_PANE_ID:-}" ] && [ -d "$STATE_DIR" ] || return 0
+  for f in "$STATE_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    [ "$(jq -r .pane "$f")" = "$HERDR_PANE_ID" ] || continue
+    [ "$(basename "$f" .json)" = "$(json .session_id)" ] && continue
+    clear_label "$HERDR_PANE_ID"; rm -f "$f"
+  done
+}
+
+session_end() {
+  local sid sf
+  sid=$(json .session_id); sf=$(state_file "${sid:-none}")
+  [ -f "$sf" ] || return 0
+  clear_label "$(jq -r .pane "$sf")"; rm -f "$sf"
+}
+
+off() {
+  local f n=0
+  [ -d "$STATE_DIR" ] || { echo "sdd-status: no SDD run is tracked."; return 0; }
+  for f in "$STATE_DIR"/*.json; do
+    [ -f "$f" ] || continue
+    [ "$(jq -r .pane "$f")" = "${HERDR_PANE_ID:-}" ] || continue
+    clear_label "$HERDR_PANE_ID"; rm -f "$f"; n=$((n + 1))
+  done
+  echo "sdd-status: released $n SDD run(s) on pane ${HERDR_PANE_ID:-?}; label cleared, guard off."
+}
+
+case "${1:-}" in
+  post-tool|pre-tool|session-start|session-end)
+    INPUT=$(cat)
+    if [ -n "${SDD_STATUS_DEBUG:-}" ]; then
+      jq -c --arg ev "$1" '{ev:$ev, sid:.session_id, agent_id, tool:.tool_name,
+        path:(.tool_input.file_path // .tool_input.command // null)}' <<<"$INPUT" \
+        >>"$SDD_STATUS_DEBUG" 2>/dev/null
+    fi ;;
+esac
+case "${1:-}" in
+  post-tool) post_tool ;;
+  pre-tool) pre_tool ;;
+  session-start) session_start ;;
+  session-end) session_end ;;
+  off) off ;;
+  render) render "$2" ;;
+  *) echo "usage: sdd-status post-tool|pre-tool|session-start|session-end|off|render WS" >&2; exit 2 ;;
+esac
+exit 0

@@ -1,0 +1,13 @@
+{
+  "name": "herdr-sdd-status",
+  "description": "Claude Code plugin: superpowers SDD progress in the herdr sidebar + orchestrator edit guard",
+  "owner": {
+    "name": "arthurseredaa"
+  },
+  "plugins": [
+    {
+      "name": "sdd-status",
+      "source": "./"
+    }
+  ]
+}

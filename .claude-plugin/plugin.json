@@ -1,0 +1,17 @@
+{
+  "name": "sdd-status",
+  "version": "0.1.0",
+  "description": "Shows superpowers SDD progress in the herdr sidebar and stops the SDD orchestrator from editing project files itself",
+  "author": {
+    "name": "arthurseredaa",
+    "url": "https://github.com/arthurseredaa"
+  },
+  "license": "MIT",
+  "keywords": [
+    "herdr",
+    "superpowers",
+    "sdd",
+    "status"
+  ],
+  "repository": "https://github.com/arthurseredaa/herdr-sdd-status"
+}
